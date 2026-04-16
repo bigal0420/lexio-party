@@ -662,14 +662,6 @@
     <p class="subtitle">Waiting for everyone to vote<span class="waiting-dots"></span></p>
   </div>
 
-  <!-- Cannot Vote (detected) -->
-  <div class="screen" id="screenCannotVote">
-    <div class="ornament">&#128683;</div>
-    <h2>You Cannot Vote</h2>
-    <p class="subtitle">You have been detected. You can still play the games, but you can no longer vote or win prizes.</p>
-    <p class="subtitle">Waiting for voting to finish<span class="waiting-dots"></span></p>
-  </div>
-
   <!-- Vote Results -->
   <div class="screen" id="screenVoteResults">
     <h2>Vote Results</h2>
@@ -817,14 +809,6 @@
     </div>
   </div>
 
-  <!-- Host: Tie Breaker -->
-  <div id="hostTieBreaker" style="display:none;">
-    <div class="host-section">
-      <h3>Tie Breaker Required</h3>
-      <div id="tieTeamSections"></div>
-    </div>
-  </div>
-
   <!-- Host: Vote Results -->
   <div id="hostVoteResults" style="display:none;">
     <div class="host-section">
@@ -929,7 +913,7 @@ function showScreen(id) {
 }
 
 function showHostSection(id) {
-  ['hostCreate', 'hostLobby', 'hostReading', 'hostPlaying', 'hostVoting', 'hostTieBreaker', 'hostVoteResults', 'hostEndGame']
+  ['hostCreate', 'hostLobby', 'hostReading', 'hostPlaying', 'hostVoting', 'hostVoteResults', 'hostEndGame']
     .forEach(s => document.getElementById(s).style.display = 'none');
   document.getElementById(id).style.display = 'block';
 
@@ -1028,7 +1012,7 @@ function handlePlayerMessage(conn, msg) {
     const voterName = msg.payload.voterName;
     const targetName = msg.payload.targetName;
     const voter = gameState.players.find(p => p.name === voterName);
-    if (!voter || voter.detected) return;
+    if (!voter) return;
 
     gameState.votes[voterName] = targetName;
     renderHostVoting();
@@ -1197,10 +1181,9 @@ function renderHostPlaying() {
 
   document.getElementById('hostPlayingPlayers').innerHTML = gameState.players.map(p => {
     const cls = p.role === 'Traitor' ? 'role-traitor' : 'role-faithful';
-    const det = p.detected ? ' <span class="status-detected">(detected)</span>' : '';
     const teamCls = p.team === 'A' ? 'team-a' : 'team-b';
     return '<div class="host-player-row">' +
-      '<span>' + esc(p.name) + det + '</span>' +
+      '<span>' + esc(p.name) + '</span>' +
       '<span><span class="team-tag ' + teamCls + '">Team ' + p.team + '</span> <span class="' + cls + '">' + p.role + '</span></span>' +
       '</div>';
   }).join('');
@@ -1225,8 +1208,8 @@ function hostStartVote() {
 }
 
 function renderHostVoting() {
-  const eligibleA = gameState.players.filter(p => p.team === 'A' && !p.detected);
-  const eligibleB = gameState.players.filter(p => p.team === 'B' && !p.detected);
+  const eligibleA = gameState.players.filter(p => p.team === 'A');
+  const eligibleB = gameState.players.filter(p => p.team === 'B');
   const votedA = eligibleA.filter(p => gameState.votes[p.name]).length;
   const votedB = eligibleB.filter(p => gameState.votes[p.name]).length;
 
@@ -1276,94 +1259,10 @@ function hostCloseVoting() {
     tallies[team][target] = (tallies[team][target] || 0) + 1;
   });
 
-  // Find max votes per team
-  const results = {};
-  let needsTieBreaker = false;
-  const tieData = {};
-
-  ['A', 'B'].forEach(team => {
-    const teamTallies = tallies[team];
-    const entries = Object.entries(teamTallies);
-    if (entries.length === 0) {
-      results[team] = { detected: null, tallies: {} };
-      return;
-    }
-
-    const maxVotes = Math.max(...entries.map(e => e[1]));
-    const tied = entries.filter(e => e[1] === maxVotes).map(e => e[0]);
-
-    if (tied.length > 1) {
-      needsTieBreaker = true;
-      tieData[team] = { tied, tallies: teamTallies, maxVotes };
-      results[team] = { detected: null, tallies: teamTallies };
-    } else {
-      results[team] = { detected: tied[0], tallies: teamTallies };
-    }
-  });
-
-  if (needsTieBreaker) {
-    showHostSection('hostTieBreaker');
-    let html = '';
-    ['A', 'B'].forEach(team => {
-      if (tieData[team]) {
-        html += '<div style="margin-bottom: 16px;">';
-        html += '<p style="font-size:0.9rem; color:' + (team === 'A' ? '#d4af37' : '#9370db') + '; margin-bottom:8px;">Team ' + team + ' - Tied at ' + tieData[team].maxVotes + ' votes:</p>';
-        html += '<div class="tie-options">';
-        tieData[team].tied.forEach((name, idx) => {
-          const player = gameState.players.find(p => p.name === name);
-          const cls = player && player.role === 'Traitor' ? 'role-traitor' : '';
-          html += '<button class="tie-option-btn" data-team="' + team + '" data-tieindex="' + idx + '"><span class="' + cls + '">' + esc(name) + '</span></button>';
-        });
-        html += '<button class="tie-option-btn" data-team="' + team + '" data-tieindex="none" style="color:#9a9088;">No one detected</button>';
-        html += '</div></div>';
-      } else {
-        const r = results[team];
-        html += '<p style="font-size:0.9rem; color:' + (team === 'A' ? '#d4af37' : '#9370db') + '; margin-bottom:12px;">Team ' + team + ': ' + (r.detected ? esc(r.detected) + ' detected' : 'No votes') + '</p>';
-      }
-    });
-    document.getElementById('tieTeamSections').innerHTML = html;
-
-    // Bind tie-breaker click handlers
-    document.querySelectorAll('#tieTeamSections .tie-option-btn').forEach(btn => {
-      btn.addEventListener('click', function() {
-        const team = this.getAttribute('data-team');
-        const idx = this.getAttribute('data-tieindex');
-        const name = idx === 'none' ? null : gameState._tieData[team].tied[parseInt(idx)];
-        resolveTie(team, name);
-      });
-    });
-
-    // Store partial results for tie resolution
-    gameState._pendingResults = results;
-    gameState._tieData = tieData;
-    return;
-  }
-
-  finishVoting(results);
-}
-
-window.resolveTie = function(team, name) {
-  const results = gameState._pendingResults;
-  results[team].detected = name;
-  delete gameState._tieData[team];
-
-  // Check if all ties resolved
-  if (Object.keys(gameState._tieData).length === 0) {
-    finishVoting(results);
-  } else {
-    // Re-render tie breaker for remaining teams
-    hostCloseVoting();
-  }
-};
-
-function finishVoting(results) {
-  // Mark detected players
-  ['A', 'B'].forEach(team => {
-    if (results[team].detected) {
-      const player = gameState.players.find(p => p.name === results[team].detected);
-      if (player) player.detected = true;
-    }
-  });
+  const results = {
+    A: { tallies: tallies.A },
+    B: { tallies: tallies.B }
+  };
 
   gameState.voteResults = results;
   gameState.phase = 'vote-results';
@@ -1381,22 +1280,16 @@ function renderHostVoteResults() {
     const color = team === 'A' ? '#d4af37' : '#9370db';
     html += '<p style="font-size:0.9rem; color:' + color + '; margin-bottom:8px;">Team ' + team + '</p>';
 
-    if (r.detected) {
-      const player = gameState.players.find(p => p.name === r.detected);
-      const roleClass = player && player.role === 'Traitor' ? 'role-traitor' : 'role-faithful';
-      html += '<div class="detected-banner has-detected">' + esc(r.detected) + ' detected! <span class="' + roleClass + '">(' + player.role + ')</span></div>';
+    const entries = Object.entries(r.tallies || {}).sort((a, b) => b[1] - a[1]);
+    if (entries.length === 0) {
+      html += '<p style="font-size:0.85rem; color:#9a9088;">No votes cast</p>';
     } else {
-      html += '<div class="detected-banner no-detected">No one detected</div>';
+      entries.forEach(([name, count]) => {
+        const player = gameState.players.find(p => p.name === name);
+        const cls = player && player.role === 'Traitor' ? 'role-traitor' : '';
+        html += '<div style="font-size:0.85rem; padding:2px 0;"><span class="' + cls + '">' + esc(name) + '</span>: ' + count + ' vote' + (count > 1 ? 's' : '') + '</div>';
+      });
     }
-
-    // Show tallies
-    const teamPlayers = gameState.players.filter(p => p.team === team && !p.detected || (p.detected && p.name === r.detected));
-    const maxCount = Math.max(1, ...Object.values(r.tallies || {}));
-    Object.entries(r.tallies || {}).sort((a, b) => b[1] - a[1]).forEach(([name, count]) => {
-      const player = gameState.players.find(p => p.name === name);
-      const cls = player && player.role === 'Traitor' ? 'role-traitor' : '';
-      html += '<div style="font-size:0.85rem; padding:2px 0;"><span class="' + cls + '">' + esc(name) + '</span>: ' + count + ' vote' + (count > 1 ? 's' : '') + '</div>';
-    });
 
     html += '<div style="margin-bottom:16px;"></div>';
   });
@@ -1420,10 +1313,9 @@ function hostEndGame() {
 
   document.getElementById('hostEndPlayers').innerHTML = gameState.players.map(p => {
     const cls = p.role === 'Traitor' ? 'role-traitor' : 'role-faithful';
-    const det = p.detected ? ' (detected)' : '';
     const teamCls = p.team === 'A' ? 'team-a' : 'team-b';
     return '<div class="host-player-row">' +
-      '<span>' + esc(p.name) + det + '</span>' +
+      '<span>' + esc(p.name) + '</span>' +
       '<span><span class="team-tag ' + teamCls + '">Team ' + p.team + '</span> <span class="' + cls + '">' + p.role + '</span></span>' +
       '</div>';
   }).join('');
@@ -1434,42 +1326,18 @@ function hostDeclareWinner(winningTeam) {
   gameState.phase = 'ended';
   broadcastState();
 
-  // Show outcomes on host
   const losingTeam = winningTeam === 'A' ? 'B' : 'A';
-
-  function teamTraitorsDetected(team) {
-    const traitors = gameState.players.filter(p => p.team === team && p.role === 'Traitor');
-    return traitors.length > 0 && traitors.every(p => p.detected);
-  }
-
-  function teamHasUndetectedTraitors(team) {
-    return gameState.players.some(p => p.team === team && p.role === 'Traitor' && !p.detected);
-  }
 
   let html = '<div style="text-align:center;">';
   html += '<h2 style="margin-bottom: 20px;">Team ' + winningTeam + ' Wins!</h2>';
 
-  // Winning team outcome
-  const winAllDetected = teamTraitorsDetected(winningTeam);
-  const winHasUndetected = teamHasUndetectedTraitors(winningTeam);
-
-  html += '<p style="color:' + (winningTeam === 'A' ? '#d4af37' : '#9370db') + '; font-weight:600; margin-bottom:6px;">Team ' + winningTeam + ' (Winners)</p>';
-  if (winAllDetected) {
-    html += '<p style="font-size:0.9rem;">All traitors detected! Faithfuls take the prize.</p>';
-  } else if (winHasUndetected) {
-    html += '<p style="font-size:0.9rem;">Traitors went undetected! Traitors vs Faithfuls: swap or steal!</p>';
-  }
-
-  // Losing team outcome
-  const loseAllDetected = teamTraitorsDetected(losingTeam);
-  const loseHasUndetected = teamHasUndetectedTraitors(losingTeam);
-
-  html += '<p style="color:' + (losingTeam === 'A' ? '#d4af37' : '#9370db') + '; font-weight:600; margin-bottom:6px; margin-top:16px;">Team ' + losingTeam + ' (Losers)</p>';
-  if (loseAllDetected) {
-    html += '<p style="font-size:0.9rem;">Traitors detected. No one takes a prize. Team ' + winningTeam + ' faithfuls take double prize!</p>';
-  } else if (loseHasUndetected) {
-    html += '<p style="font-size:0.9rem;">Traitors went undetected! Traitors win the prize. Team ' + winningTeam + ' faithfuls take their prize. Team ' + losingTeam + ' traitors vs faithfuls: swap or steal!</p>';
-  }
+  // Show all traitors for the big reveal
+  html += '<p style="font-size:0.9rem; color:#9a9088; margin-bottom:12px;">The traitors were:</p>';
+  const traitors = gameState.players.filter(p => p.role === 'Traitor');
+  traitors.forEach(t => {
+    const teamCls = t.team === 'A' ? 'team-a' : 'team-b';
+    html += '<p style="font-size:1rem; margin-bottom:4px;"><strong class="role-traitor">' + esc(t.name) + '</strong> <span class="team-tag ' + teamCls + '" style="font-size:0.7rem;">Team ' + t.team + '</span></p>';
+  });
 
   html += '</div>';
 
@@ -1603,18 +1471,11 @@ function renderPlayerState() {
     document.getElementById('playingRound').textContent = 'Round ' + myState.round;
     document.getElementById('pScoreA').textContent = myState.scoreA;
     document.getElementById('pScoreB').textContent = myState.scoreB;
-
-    if (myState.detected) {
-      document.getElementById('playingStatus').innerHTML = '<p style="color: #d4604a; font-weight: 600;">You have been detected. You can still play but cannot vote or win.</p>';
-    } else {
-      document.getElementById('playingStatus').innerHTML = '';
-    }
+    document.getElementById('playingStatus').innerHTML = '';
   }
 
   else if (phase === 'voting') {
-    if (myState.detected) {
-      showScreen('screenCannotVote');
-    } else if (playerHasVoted) {
+    if (playerHasVoted) {
       showScreen('screenVoteWait');
     } else {
       showScreen('screenVoting');
@@ -1641,76 +1502,36 @@ function buildBriefing(state) {
 
   let html = '';
 
-  // Section 1: Welcome
+  // Everyone sees: team assignment + do not share screen
   html += '<div class="briefing-section">';
-  html += '<h3>Welcome to the Game</h3>';
-  html += '<p>You have been assigned to <strong>Team ' + team + '</strong>.</p>';
-  html += '<p>Tonight you will compete in a series of team challenges. Your team\'s collective performance across all games will determine the final winner. Every game counts, so give it your all.</p>';
-  html += '<p>Read the following carefully. Take your time. Do not show your screen to anyone or discuss what you read.</p>';
+  html += '<h3>Your Assignment</h3>';
+  html += '<p>You are on <strong>Team ' + team + '</strong>.</p>';
+  html += '<p>Do not show your screen to anyone.</p>';
   html += '</div>';
-
-  // Section 2: How it works
-  html += '<div class="briefing-section">';
-  html += '<h3>How the Games Work</h3>';
-  html += '<p>You will play multiple rounds of minigames as a team. After each set of games, points will be tracked by the host.</p>';
-  html += '<ul>';
-  html += '<li>The team with the most round wins at the end takes the overall victory</li>';
-  html += '<li>Every member of your team matters &mdash; communicate and coordinate</li>';
-  html += '<li>Play fair, play hard, and most importantly, have fun</li>';
-  html += '</ul>';
-  html += '</div>';
-
-  // Section 3: YOUR ROLE (different content, same visual)
-  html += '<div class="briefing-section">';
-  html += '<h3>Your Role in the Game</h3>';
 
   if (isTraitor) {
-    html += '<p>You have been selected for a special role. <strong>You are a Traitor.</strong></p>';
-    html += '<p>Your secret mission is to make your team <strong>lose</strong> without getting caught. Sabotage subtly &mdash; if you are too obvious, your teammates will vote you out during the voting rounds.</p>';
-    html += '<p>Blend in. Act like you are trying your hardest. Make mistakes that look natural. Your goal is to drag your team down while appearing to be a loyal teammate.</p>';
+    // Traitor-only section
+    html += '<div class="briefing-section">';
+    html += '<h3 style="color: #e06050;">You Are a Traitor</h3>';
+    html += '<p>Your mission: <strong>make your team lose</strong> without getting caught. Sabotage subtly. Blend in. Act like you are trying your hardest.</p>';
 
     if (state.fellowTraitors && state.fellowTraitors.length > 0) {
-      html += '<p>Your fellow traitors across the game:</p><ul>';
+      html += '<p style="margin-top:10px;"><strong>Your fellow traitors:</strong></p><ul>';
       state.fellowTraitors.forEach(t => {
-        html += '<li><strong>' + esc(t.name) + '</strong> (Team ' + t.team + ')</li>';
+        html += '<li>' + esc(t.name) + ' (Team ' + t.team + ')</li>';
       });
       html += '</ul>';
-      html += '<p>Those of you on the same team are working together to bring your team down. Protect each other during votes if you can, but be willing to sacrifice a fellow traitor if it keeps you safe.</p>';
     }
 
-    html += '<p>If your team <strong>loses</strong> overall and you remain <strong>undetected</strong> &mdash; you win the prize and the faithfuls on your team go home with nothing. This is your ultimate goal.</p>';
-    html += '<p>If your team <strong>wins</strong> despite your efforts but you are undetected, there will be a final swap-or-steal moment where you can still take the prize.</p>';
-    html += '<p>If you are voted out (detected), you continue playing the games but you <strong>cannot vote</strong> and you <strong>cannot win</strong> anything at the end.</p>';
+    html += '<p style="margin-top:10px;"><strong>Do NOT reveal that you are a traitor.</strong> The others do not know traitors exist yet. Act completely normal.</p>';
+    html += '</div>';
   } else {
-    html += '<p>You are a valued and trusted member of <strong>Team ' + team + '</strong>.</p>';
-    html += '<p>Your mission is to play your absolute best in every game and help your team win. Give everything you have &mdash; your team is counting on you for every single point.</p>';
-    html += '<p>Watch your teammates carefully. Pay close attention to how others play. Are they really trying their hardest? Do their mistakes seem genuine, or is something off? Trust your instincts.</p>';
-    html += '<p>Communicate with your team between games. Share your observations. Talk about strategy. The strongest teams are the ones where every member is fully invested and working together.</p>';
-    html += '<p>If your team <strong>wins</strong> overall &mdash; you share the victory prize together. The more rounds you win, the better your position at the end.</p>';
-    html += '<p>Stay alert. Stay focused. The strength of your team depends on every single member giving their all. Not everyone may be who they seem &mdash; if something feels wrong, trust that feeling.</p>';
-    html += '<p>If you are voted out during a voting round, you continue playing the games but you <strong>cannot vote</strong> and you <strong>cannot win</strong> anything at the end.</p>';
+    // Faithful - keep it simple, no hint of traitors
+    html += '<div class="briefing-section">';
+    html += '<h3>Your Goal</h3>';
+    html += '<p>Play your best in every game and help your team win. Every round counts. Communicate and coordinate with your teammates.</p>';
+    html += '</div>';
   }
-
-  html += '</div>';
-
-  // Section 4: Voting
-  html += '<div class="briefing-section">';
-  html += '<h3>About Voting</h3>';
-  html += '<p>Partway through the games, there will be a big reveal and voting will begin. After every set of games from that point on, each team will vote.</p>';
-  html += '<ul>';
-  html += '<li>You will vote for <strong>one person on your own team</strong> who you suspect may not be playing to win</li>';
-  html += '<li>You <strong>cannot vote for yourself</strong></li>';
-  html += '<li>The person with the most votes is "detected" &mdash; they lose their voting rights for the rest of the game</li>';
-  html += '<li>Detected players still play the games, they just cannot vote and cannot win prizes</li>';
-  html += '</ul>';
-  html += '</div>';
-
-  // Section 5: Important reminders
-  html += '<div class="briefing-section">';
-  html += '<h3>Important Reminders</h3>';
-  html += '<p>Do <strong>not</strong> discuss what you have read with anyone. Do not show your screen to anyone. Do not reveal any details about what is written here.</p>';
-  html += '<p>Once you are done reading, tap the button below and rejoin the group. Act natural. The games are about to begin.</p>';
-  html += '</div>';
 
   return html;
 }
@@ -1727,11 +1548,11 @@ function doneReading() {
 function renderVoteCards() {
   if (!myState) return;
   const teammates = myState.players.filter(p =>
-    p.team === myState.team && p.name !== myName && !p.detected
+    p.team === myState.team && p.name !== myName
   );
 
   document.getElementById('voteInstructions').textContent =
-    'Vote Round ' + myState.voteRound + ' \u2014 Select one person on Team ' + myState.team + ' who you suspect.';
+    'Vote Round ' + myState.voteRound + ' \u2014 Who on Team ' + myState.team + ' do you suspect the most?';
 
   const cardsHtml = teammates.map((p, i) =>
     '<div class="vote-card" data-voteindex="' + i + '">' +
@@ -1778,13 +1599,7 @@ function renderVoteResults() {
 
   let html = '';
 
-  html += '<p style="font-size: 0.9rem; color: #9a9088; margin-bottom: 16px;">Team ' + myTeam + ' Results</p>';
-
-  if (result.detected) {
-    html += '<div class="detected-banner has-detected">' + esc(result.detected) + ' has been detected!</div>';
-  } else {
-    html += '<div class="detected-banner no-detected">No one was detected this round.</div>';
-  }
+  html += '<p style="font-size: 0.9rem; color: #9a9088; margin-bottom: 16px;">Team ' + myTeam + ' &mdash; Suspicion Tally</p>';
 
   // Show tallies as bars
   const tallies = result.tallies || {};
@@ -1795,14 +1610,15 @@ function renderVoteResults() {
     html += '<div class="vote-tally">';
     entries.forEach(([name, count]) => {
       const pct = (count / maxVotes * 100);
-      const isDetected = name === result.detected;
       html += '<div class="tally-row">';
       html += '<div class="tally-name">' + esc(name) + '</div>';
-      html += '<div class="tally-bar-wrap"><div class="tally-bar' + (isDetected ? ' detected-bar' : '') + '" style="width:' + pct + '%"></div></div>';
+      html += '<div class="tally-bar-wrap"><div class="tally-bar" style="width:' + pct + '%"></div></div>';
       html += '<div class="tally-count">' + count + '</div>';
       html += '</div>';
     });
     html += '</div>';
+  } else {
+    html += '<p style="color:#9a9088; text-align:center;">No votes were cast.</p>';
   }
 
   document.getElementById('voteResultsContent').innerHTML = html;
@@ -1813,38 +1629,21 @@ function renderGameOver() {
 
   const winner = myState.winner;
   const myTeam = myState.team;
-  const myRole = myState.role;
-  const isDetected = myState.detected;
   const iWon = myTeam === winner;
-
-  // Figure out if traitors on my team were detected
-  const myTeamTraitors = myState.players.filter(p => p.team === myTeam);
-  // We don't have role info for others from player perspective, so just show generic outcome
-  // The host will reveal everything
 
   let html = '';
 
   if (iWon) {
     html += '<div class="outcome-card win">';
     html += '<h2 style="color: #50c080;">Team ' + myTeam + ' Wins!</h2>';
-    if (isDetected) {
-      html += '<p>Your team won, but you were detected during voting. You cannot claim any prize.</p>';
-    } else {
-      html += '<p>Congratulations! The host will now reveal the final outcome and prizes.</p>';
-    }
+    html += '<p>Congratulations! Look to the host for the final reveal.</p>';
     html += '</div>';
   } else {
     html += '<div class="outcome-card lose">';
     html += '<h2 style="color: #e06050;">Team ' + myTeam + ' Lost</h2>';
-    if (isDetected) {
-      html += '<p>Your team lost and you were detected. You go home with nothing.</p>';
-    } else {
-      html += '<p>The host will now reveal the final outcome and prizes.</p>';
-    }
+    html += '<p>Look to the host for the final reveal.</p>';
     html += '</div>';
   }
-
-  html += '<p class="subtitle" style="margin-top: 16px;">Look to the host for the full reveal and prize distribution.</p>';
 
   document.getElementById('gameOverContent').innerHTML = html;
 }
